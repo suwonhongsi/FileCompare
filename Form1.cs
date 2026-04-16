@@ -13,7 +13,6 @@ namespace FileCompare
 {
     public partial class Form1 : Form
     {
-        // FileInfo 대신 폴더와 파일을 모두 담을 수 있는 FileSystemInfo를 사용합니다.
         private Dictionary<string, FileSystemInfo> leftFiles = new Dictionary<string, FileSystemInfo>();
         private Dictionary<string, FileSystemInfo> rightFiles = new Dictionary<string, FileSystemInfo>();
 
@@ -61,7 +60,6 @@ namespace FileCompare
             try
             {
                 DirectoryInfo di = new DirectoryInfo(path);
-                // GetFileSystemInfos()를 써서 파일과 폴더를 모두 가져옵니다.
                 var items = di.GetFileSystemInfos().ToDictionary(f => f.Name, StringComparer.OrdinalIgnoreCase);
 
                 if (isLeft) leftFiles = items;
@@ -90,22 +88,20 @@ namespace FileCompare
                 {
                     ListViewItem item = new ListViewItem(f.Name);
 
-                    // 폴더면 <DIR>, 파일이면 용량 표시
                     if (f is DirectoryInfo) item.SubItems.Add("<DIR>");
                     else item.SubItems.Add(FormatSize(((FileInfo)f).Length));
 
                     item.SubItems.Add(f.LastWriteTime.ToString("g"));
 
-                    // 색상 처리 로직
                     if (target.TryGetValue(f.Name, out var other))
                     {
-                        if (f.LastWriteTime == other.LastWriteTime) item.ForeColor = Color.Black; // 동일
-                        else if (f.LastWriteTime > other.LastWriteTime) item.ForeColor = Color.Red; // 신규(New)
-                        else item.ForeColor = Color.Gray; // 오래됨(Old)
+                        if (f.LastWriteTime == other.LastWriteTime) item.ForeColor = Color.Black;
+                        else if (f.LastWriteTime > other.LastWriteTime) item.ForeColor = Color.Red;
+                        else item.ForeColor = Color.Gray;
                     }
                     else
                     {
-                        item.ForeColor = Color.Purple; // 단독 파일/폴더
+                        item.ForeColor = Color.Purple;
                     }
                     lv.Items.Add(item);
                 }
@@ -150,7 +146,14 @@ namespace FileCompare
         {
             if (File.Exists(destPath))
             {
-                if (!ShowOverwriteDialog(srcPath, destPath)) return false;
+                DateTime srcTime = File.GetLastWriteTime(srcPath);
+                DateTime destTime = File.GetLastWriteTime(destPath);
+
+                // 대상 파일이 더 최신(신규)일 때만 문구를 띄움
+                if (destTime > srcTime)
+                {
+                    if (!ShowOverwriteDialog(srcPath, destPath)) return false;
+                }
             }
             try { File.Copy(srcPath, destPath, true); return true; }
             catch (Exception ex) { MessageBox.Show(ex.Message); return false; }
@@ -160,7 +163,14 @@ namespace FileCompare
         {
             if (Directory.Exists(destDir))
             {
-                if (!ShowOverwriteDialog(srcDir, destDir)) return;
+                DateTime srcTime = Directory.GetLastWriteTime(srcDir);
+                DateTime destTime = Directory.GetLastWriteTime(destDir);
+
+                // 대상 폴더가 더 최신일 때만 문구를 띄움
+                if (destTime > srcTime)
+                {
+                    if (!ShowOverwriteDialog(srcDir, destDir)) return;
+                }
             }
             RecursiveCopy(srcDir, destDir);
         }
@@ -176,9 +186,10 @@ namespace FileCompare
 
         private bool ShowOverwriteDialog(string src, string dest)
         {
-            string msg = $"대상에 동일한 이름의 항목이 이미 있습니다.\n" +
-                         $"대상 항목이 더 신규일 수 있습니다. 덮어쓰시겠습니까?\n\n" +
-                         $"원본: {src}\n대상: {dest}";
+            string msg = "대상에 동일한 이름의 파일이 이미 있습니다.\n" +
+                         "대상 파일이 더 신규 파일입니다. 덮어쓰시겠습니까?\n\n" +
+                         $"원본: {src}\n" +
+                         $"대상: {dest}";
             return MessageBox.Show(msg, "덮어쓰기 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
         }
 
