@@ -13,8 +13,9 @@ namespace FileCompare
 {
     public partial class Form1 : Form
     {
-        private Dictionary<string, FileInfo> leftFiles = new Dictionary<string, FileInfo>();
-        private Dictionary<string, FileInfo> rightFiles = new Dictionary<string, FileInfo>();
+        // FileInfo 대신 폴더와 파일을 모두 담을 수 있는 FileSystemInfo를 사용합니다.
+        private Dictionary<string, FileSystemInfo> leftFiles = new Dictionary<string, FileSystemInfo>();
+        private Dictionary<string, FileSystemInfo> rightFiles = new Dictionary<string, FileSystemInfo>();
 
         public Form1()
         {
@@ -26,9 +27,7 @@ namespace FileCompare
             using (var dlg = new FolderBrowserDialog())
             {
                 if (!string.IsNullOrWhiteSpace(txtLeftDir.Text) && Directory.Exists(txtLeftDir.Text))
-                {
                     dlg.SelectedPath = txtLeftDir.Text;
-                }
 
                 if (dlg.ShowDialog() == DialogResult.OK)
                 {
@@ -44,9 +43,7 @@ namespace FileCompare
             using (var dlg = new FolderBrowserDialog())
             {
                 if (!string.IsNullOrWhiteSpace(txtRightDir.Text) && Directory.Exists(txtRightDir.Text))
-                {
                     dlg.SelectedPath = txtRightDir.Text;
-                }
 
                 if (dlg.ShowDialog() == DialogResult.OK)
                 {
@@ -64,10 +61,11 @@ namespace FileCompare
             try
             {
                 DirectoryInfo di = new DirectoryInfo(path);
-                if (isLeft)
-                    leftFiles = di.GetFiles().ToDictionary(f => f.Name, StringComparer.OrdinalIgnoreCase);
-                else
-                    rightFiles = di.GetFiles().ToDictionary(f => f.Name, StringComparer.OrdinalIgnoreCase);
+                // GetFileSystemInfos()를 써서 파일과 폴더를 모두 가져옵니다.
+                var items = di.GetFileSystemInfos().ToDictionary(f => f.Name, StringComparer.OrdinalIgnoreCase);
+
+                if (isLeft) leftFiles = items;
+                else rightFiles = items;
             }
             catch (Exception ex)
             {
@@ -81,85 +79,56 @@ namespace FileCompare
             PopulateListView(lvwrightDir, rightFiles, leftFiles);
         }
 
-        private void PopulateListView(ListView lv, Dictionary<string, FileInfo> source, Dictionary<string, FileInfo> target)
+        private void PopulateListView(ListView lv, Dictionary<string, FileSystemInfo> source, Dictionary<string, FileSystemInfo> target)
         {
             lv.BeginUpdate();
             lv.Items.Clear();
 
             try
             {
-                foreach (var f in source.Values.OrderBy(x => x.Name))
+                foreach (var f in source.Values.OrderBy(x => x is DirectoryInfo ? 0 : 1).ThenBy(x => x.Name))
                 {
                     ListViewItem item = new ListViewItem(f.Name);
-                    item.SubItems.Add(FormatSize(f.Length));
+
+                    // 폴더면 <DIR>, 파일이면 용량 표시
+                    if (f is DirectoryInfo) item.SubItems.Add("<DIR>");
+                    else item.SubItems.Add(FormatSize(((FileInfo)f).Length));
+
                     item.SubItems.Add(f.LastWriteTime.ToString("g"));
 
-                    if (target.TryGetValue(f.Name, out var otherFile))
+                    // 색상 처리 로직
+                    if (target.TryGetValue(f.Name, out var other))
                     {
-                        if (f.LastWriteTime == otherFile.LastWriteTime)
-                        {
-                            item.ForeColor = Color.Black;
-                        }
-                        else if (f.LastWriteTime > otherFile.LastWriteTime)
-                        {
-                            item.ForeColor = Color.Red;
-                        }
-                        else
-                        {
-                            item.ForeColor = Color.Gray;
-                        }
+                        if (f.LastWriteTime == other.LastWriteTime) item.ForeColor = Color.Black; // 동일
+                        else if (f.LastWriteTime > other.LastWriteTime) item.ForeColor = Color.Red; // 신규(New)
+                        else item.ForeColor = Color.Gray; // 오래됨(Old)
                     }
                     else
                     {
-                        item.ForeColor = Color.Purple;
+                        item.ForeColor = Color.Purple; // 단독 파일/폴더
                     }
-
                     lv.Items.Add(item);
                 }
-
-                foreach (ColumnHeader col in lv.Columns)
-                {
-                    col.Width = -2;
-                }
+                foreach (ColumnHeader col in lv.Columns) col.Width = -2;
             }
-            finally
-            {
-                lv.EndUpdate();
-            }
+            finally { lv.EndUpdate(); }
         }
 
-        private string FormatSize(long bytes)
-        {
-            return (bytes / 1024f).ToString("N1") + " KB";
-        }
+        private string FormatSize(long bytes) => (bytes / 1024f).ToString("N1") + " KB";
 
         private void btnCopyFromLeft_Click(object sender, EventArgs e)
         {
-            if (string.IsNullOrEmpty(txtLeftDir.Text) || string.IsNullOrEmpty(txtRightDir.Text))
-            {
-                MessageBox.Show($"2번 오류: 경로가 비어있음!\n왼쪽: {txtLeftDir.Text}\n오른쪽: {txtRightDir.Text}");
-                return;
-            }
-
-            // 진단 3: 선택된 파일이 있는지 확인
-            if (lvwLeftDir.SelectedItems.Count == 0)
-            {
-                MessageBox.Show("리스트뷰에서 파일을 선택하지 않았습니다!");
-                return;
-            }
+            if (string.IsNullOrEmpty(txtLeftDir.Text) || string.IsNullOrEmpty(txtRightDir.Text)) return;
 
             foreach (ListViewItem item in lvwLeftDir.SelectedItems)
             {
-                string fileName = item.Text;
-                string srcPath = Path.Combine(txtLeftDir.Text, fileName);
-                string destPath = Path.Combine(txtRightDir.Text, fileName);
+                string srcPath = Path.Combine(txtLeftDir.Text, item.Text);
+                string destPath = Path.Combine(txtRightDir.Text, item.Text);
 
-                if (CopyFileWithConfirmation(srcPath, destPath))
-                {
-                    LoadFiles(txtRightDir.Text, false);
-                }
+                if (leftFiles[item.Text] is DirectoryInfo) CopyDirectoryWithConfirmation(srcPath, destPath);
+                else CopyFileWithConfirmation(srcPath, destPath);
             }
-            SyncViews();
+            LoadFiles(txtLeftDir.Text, true); LoadFiles(txtRightDir.Text, false); SyncViews();
         }
 
         private void btnCopyFromRight_Click(object sender, EventArgs e)
@@ -168,45 +137,49 @@ namespace FileCompare
 
             foreach (ListViewItem item in lvwrightDir.SelectedItems)
             {
-                string fileName = item.Text;
-                string srcPath = Path.Combine(txtRightDir.Text, fileName);
-                string destPath = Path.Combine(txtLeftDir.Text, fileName);
+                string srcPath = Path.Combine(txtRightDir.Text, item.Text);
+                string destPath = Path.Combine(txtLeftDir.Text, item.Text);
 
-                if (CopyFileWithConfirmation(srcPath, destPath))
-                {
-                    LoadFiles(txtLeftDir.Text, true);
-                }
+                if (rightFiles[item.Text] is DirectoryInfo) CopyDirectoryWithConfirmation(srcPath, destPath);
+                else CopyFileWithConfirmation(srcPath, destPath);
             }
-            SyncViews();
+            LoadFiles(txtLeftDir.Text, true); LoadFiles(txtRightDir.Text, false); SyncViews();
         }
 
         private bool CopyFileWithConfirmation(string srcPath, string destPath)
         {
             if (File.Exists(destPath))
             {
-                DateTime srcTime = File.GetLastWriteTime(srcPath);
-                DateTime destTime = File.GetLastWriteTime(destPath);
-
-                string msg = "대상에 동일한 이름의 파일이 이미 있습니다.\n" +
-                     "대상 파일이 더 신규 파일입니다. 덮어쓰시겠습니까?\n\n" +
-                     $"원본: {srcPath}\n" +
-                     $"대상: {destPath}";
-           
-                var result = MessageBox.Show(msg, "덮어쓰기 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-
-                if (result == DialogResult.No) return false;
+                if (!ShowOverwriteDialog(srcPath, destPath)) return false;
             }
+            try { File.Copy(srcPath, destPath, true); return true; }
+            catch (Exception ex) { MessageBox.Show(ex.Message); return false; }
+        }
 
-            try
+        private void CopyDirectoryWithConfirmation(string srcDir, string destDir)
+        {
+            if (Directory.Exists(destDir))
             {
-                File.Copy(srcPath, destPath, true);
-                return true;
+                if (!ShowOverwriteDialog(srcDir, destDir)) return;
             }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"복사 실패: {ex.Message}");
-                return false;
-            }
+            RecursiveCopy(srcDir, destDir);
+        }
+
+        private void RecursiveCopy(string sourceDir, string targetDir)
+        {
+            Directory.CreateDirectory(targetDir);
+            foreach (var file in Directory.GetFiles(sourceDir))
+                File.Copy(file, Path.Combine(targetDir, Path.GetFileName(file)), true);
+            foreach (var directory in Directory.GetDirectories(sourceDir))
+                RecursiveCopy(directory, Path.Combine(targetDir, Path.GetFileName(directory)));
+        }
+
+        private bool ShowOverwriteDialog(string src, string dest)
+        {
+            string msg = $"대상에 동일한 이름의 항목이 이미 있습니다.\n" +
+                         $"대상 항목이 더 신규일 수 있습니다. 덮어쓰시겠습니까?\n\n" +
+                         $"원본: {src}\n대상: {dest}";
+            return MessageBox.Show(msg, "덮어쓰기 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
         }
 
         private void splitContainer1_SplitterMoved(object sender, SplitterEventArgs e) { }
