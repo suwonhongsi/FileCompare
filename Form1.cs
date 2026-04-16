@@ -95,9 +95,20 @@ namespace FileCompare
 
                     if (target.TryGetValue(f.Name, out var other))
                     {
-                        if (f.LastWriteTime == other.LastWriteTime) item.ForeColor = Color.Black;
-                        else if (f.LastWriteTime > other.LastWriteTime) item.ForeColor = Color.Red;
-                        else item.ForeColor = Color.Gray;
+                        // [수정] 1초 미만의 미세한 시간 차이는 동일한 것으로 간주 (파일 시스템 오차 방지)
+                        TimeSpan diff = f.LastWriteTime - other.LastWriteTime;
+                        if (Math.Abs(diff.TotalSeconds) < 1)
+                        {
+                            item.ForeColor = Color.Black;
+                        }
+                        else if (f.LastWriteTime > other.LastWriteTime)
+                        {
+                            item.ForeColor = Color.Red;
+                        }
+                        else
+                        {
+                            item.ForeColor = Color.Gray;
+                        }
                     }
                     else
                     {
@@ -144,29 +155,33 @@ namespace FileCompare
 
         private bool CopyFileWithConfirmation(string srcPath, string destPath)
         {
+            DateTime srcTime = File.GetLastWriteTime(srcPath);
+
             if (File.Exists(destPath))
             {
-                DateTime srcTime = File.GetLastWriteTime(srcPath);
                 DateTime destTime = File.GetLastWriteTime(destPath);
-
-                // 대상 파일이 더 최신(신규)일 때만 문구를 띄움
                 if (destTime > srcTime)
                 {
                     if (!ShowOverwriteDialog(srcPath, destPath)) return false;
                 }
             }
-            try { File.Copy(srcPath, destPath, true); return true; }
+            try
+            {
+                File.Copy(srcPath, destPath, true);
+                // [수정] 복사 후 원본 날짜를 대상 파일에 강제 이식
+                File.SetLastWriteTime(destPath, srcTime);
+                return true;
+            }
             catch (Exception ex) { MessageBox.Show(ex.Message); return false; }
         }
 
         private void CopyDirectoryWithConfirmation(string srcDir, string destDir)
         {
+            DateTime srcTime = Directory.GetLastWriteTime(srcDir);
+
             if (Directory.Exists(destDir))
             {
-                DateTime srcTime = Directory.GetLastWriteTime(srcDir);
                 DateTime destTime = Directory.GetLastWriteTime(destDir);
-
-                // 대상 폴더가 더 최신일 때만 문구를 띄움
                 if (destTime > srcTime)
                 {
                     if (!ShowOverwriteDialog(srcDir, destDir)) return;
@@ -177,11 +192,27 @@ namespace FileCompare
 
         private void RecursiveCopy(string sourceDir, string targetDir)
         {
+            // 원본 날짜 보관
+            DateTime srcTime = Directory.GetLastWriteTime(sourceDir);
+
+            // 폴더 생성
             Directory.CreateDirectory(targetDir);
+
             foreach (var file in Directory.GetFiles(sourceDir))
-                File.Copy(file, Path.Combine(targetDir, Path.GetFileName(file)), true);
+            {
+                string destFile = Path.Combine(targetDir, Path.GetFileName(file));
+                File.Copy(file, destFile, true);
+                // 파일 날짜 동기화
+                File.SetLastWriteTime(destFile, File.GetLastWriteTime(file));
+            }
+
             foreach (var directory in Directory.GetDirectories(sourceDir))
+            {
                 RecursiveCopy(directory, Path.Combine(targetDir, Path.GetFileName(directory)));
+            }
+
+            // [수정] 하위 내용 복사가 모두 끝난 후, 폴더 자체의 날짜도 원본과 동기화
+            Directory.SetLastWriteTime(targetDir, srcTime);
         }
 
         private bool ShowOverwriteDialog(string src, string dest)
